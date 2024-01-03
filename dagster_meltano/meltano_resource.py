@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import yaml
 from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -100,14 +101,58 @@ class MeltanoResource(metaclass=Singleton):
             return json.loads(stdout)
         except json.decoder.JSONDecodeError:
             raise ValueError(f"Could not process json: {stdout} {stderr}")
+    
+    async def load_taps_from_yaml(self) -> dict:
+        """Parse meltano.yml in meltano project dir to 
+        load tap names.
+        
+        """
+        taps_dict = {'taps' : []}
+        meltano_dot_yml_path = self.project_dir + "/meltano.yml"
+        with open(meltano_dot_yml_path, 'r') as f:
+            data = yaml.load(f, Loader=yaml.SafeLoader)
+        extractors = data['plugins']['extractors']
+        for extractor in extractors:
+            if extractor != None:
+                extractor_object = {
+                    "tap_name" : extractor['name'],
+                    "streams" : []
+                }
+            taps_dict["taps"].append(extractor_object)
+        
+        return taps_dict
+    
+    async def fetch_stream_information(self, taps_dict: dict) -> dict:
+        """Use tap names loaded from meltano.yml to 
+        fetch selected streams from tep.properties.json
+        file in .meltano/run/{tap_name} dir. 
+
+        Only applicable to taps with the properites capability.
+        
+        """
+        for i, tap_info in enumerate(taps_dict['taps']):
+            print(tap_info['tap_name'])
+
+            properties_json=f"{self.project_dir}/.meltano/run/{tap_info['tap_name']}/tap.properties.json"
+
+            f = open(properties_json)
+
+            data = json.load(f)
+
+            for stream in data['streams']:
+                if stream['selected'] == True:
+                    taps_dict["taps"][i]['streams'].append(stream['tap_stream_id'])
+        return taps_dict
 
     async def gather_meltano_yaml_information(self):
-        jobs, schedules = await asyncio.gather(
+        taps, jobs, schedules = await asyncio.gather(
+            self.fetch_stream_information(self.load_taps_from_yaml()),
             self.load_json_from_cli(["job", "list", "--format=json"]),
             self.load_json_from_cli(["schedule", "list", "--format=json"]),
         )
 
-        return jobs, schedules
+        return taps, jobs, schedules
+    
 
     @cached_property
     def meltano_yaml(self) -> dict:
@@ -116,8 +161,8 @@ class MeltanoResource(metaclass=Singleton):
         Returns:
             dict: The Meltano jobs and schedules.
         """
-        jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
-        return {"jobs": jobs["jobs"], "schedules": schedules["schedules"]}
+        taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
+        return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
 
     @cached_property
     def meltano_jobs(self) -> List[Job]:
@@ -179,6 +224,5 @@ def meltano_resource(init_context):
 
 
 if __name__ == "__main__":
-    meltano_resource = MeltanoResource("/workspace/meltano")
-    print(list(meltano_resource.jobs))
-    print(meltano_resource.jobs)
+    meltano_resource = MeltanoResource("./meltano_project")
+    meltano_resource.fetch_stream_information(meltano_resource.fetch_tap_information())

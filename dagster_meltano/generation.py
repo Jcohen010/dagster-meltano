@@ -46,9 +46,9 @@ def load_assets_from_meltano_project(
     Returns:
         List[AssetsDefinition]: Returns a list of all Meltano assets
     """
-    # meltano_resource = MeltanoResource(meltano_project_dir)
+    meltano_resource = MeltanoResource(meltano_project_dir)
     meltano_assets = []
-    # meltano_assets = [extractor.asset for extractor in meltano_resource.extractors]
+    meltano_assets = [extractor.asset for extractor in meltano_resource.extractors]
 
     # if dbt_project_dir:
     #     dbt_assets = load_assets_from_dbt_project(
