@@ -101,48 +101,62 @@ class MeltanoResource(metaclass=Singleton):
             return json.loads(stdout)
         except json.decoder.JSONDecodeError:
             raise ValueError(f"Could not process json: {stdout} {stderr}")
-    
-    async def load_taps_from_yaml(self) -> dict:
-        """Parse meltano.yml in meltano project dir to 
+        
+    async def compile_manifest(self) -> None:
+        """
+        Generate meltano_manifest.json file.
+        """
+
+        # Create the subprocess, redirect the standard output into a pipe
+        proc = await asyncio.create_subprocess_exec(
+            "meltano",
+            "compile",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.project_dir,
+        )
+
+        # Wait for the subprocess to finish
+        stdout, stderr = await proc.communicate()
+
+        # Try to load the output as JSON
+        print(f'[ exited with {proc.returncode}]')
+        if stdout:
+            print(f'[stdout]\n{stdout.decode()}')
+        if stderr:
+            print(f'[stderr]\n{stderr.decode()}')
+
+        
+    def load_taps_streams_from_manifest(self) -> dict:
+        """Parse meltano-manifest.json in .meltano project dir to 
         load tap names.
         
         """
         taps_dict = {'taps' : []}
-        meltano_dot_yml_path = self.project_dir + "/meltano.yml"
-        with open(meltano_dot_yml_path, 'r') as f:
-            data = yaml.load(f, Loader=yaml.SafeLoader)
-        extractors = data['plugins']['extractors']
-        for extractor in extractors:
-            if extractor != None:
-                extractor_object = {
-                    "tap_name" : extractor['name'],
-                    "streams" : []
-                }
-            taps_dict["taps"].append(extractor_object)
-        
-        return taps_dict
-    
-    async def fetch_stream_information(self, taps_dict: dict) -> dict:
-        """Use tap names loaded from meltano.yml to 
-        fetch selected streams from tep.properties.json
-        file in .meltano/run/{tap_name} dir. 
-
-        Only applicable to taps with the properites capability.
-        
-        """
-        for i, tap_info in enumerate(taps_dict['taps']):
-            print(tap_info['tap_name'])
-
-            properties_json=f"{self.project_dir}/.meltano/run/{tap_info['tap_name']}/tap.properties.json"
-
-            f = open(properties_json)
-
+        meltano_manifest_json_path = self.project_dir + "/.meltano/manifests/meltano-manifest.json"
+        with open(meltano_manifest_json_path, 'r') as f:
             data = json.load(f)
+        extractors = data['plugins']['extractors']
+        for i, extractor in enumerate(extractors):
+            taps_dict['taps'].append(
+                {
+                    'tap_name': extractor['name'], 
+                    'streams': []
+                }
+                    )
+        
+            if 'streams' in extractor['config']:
+                for stream in extractor['config']['streams']:
+                    taps_dict['taps'][i]['streams'].append(stream['stream_name'])
 
-            for stream in data['streams']:
-                if stream['selected'] == True:
-                    taps_dict["taps"][i]['streams'].append(stream['tap_stream_id'])
-        return taps_dict
+            elif extractor['select']:
+                for select in extractor['select']:
+                    taps_dict['taps'][i]['streams'].append(select)
+
+            # else: print('nothing')
+
+        
+        print(taps_dict)
 
     async def gather_meltano_yaml_information(self):
         taps, jobs, schedules = await asyncio.gather(
@@ -225,4 +239,5 @@ def meltano_resource(init_context):
 
 if __name__ == "__main__":
     meltano_resource = MeltanoResource("./meltano_project")
-    meltano_resource.fetch_stream_information(meltano_resource.fetch_tap_information())
+    asyncio.run(meltano_resource.compile_manifest())
+    meltano_resource.load_taps_streams_from_manifest()

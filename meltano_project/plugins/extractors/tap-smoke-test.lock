@@ -1,0 +1,7 @@
+{
+  "plugin_type": "extractors",
+  "name": "tap-smoke-test",
+  "namespace": "tap_smoke_test",
+  "label": "tap-smoke-test",
+  "pip_url": "git+https://github.com/meltano/tap-smoke-test.git"
+}
