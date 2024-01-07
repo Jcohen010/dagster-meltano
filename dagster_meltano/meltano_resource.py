@@ -101,7 +101,8 @@ class MeltanoResource(metaclass=Singleton):
             return json.loads(stdout)
         except json.decoder.JSONDecodeError:
             raise ValueError(f"Could not process json: {stdout} {stderr}")
-        
+
+    # Not sure if this should be async, still thinking on it.
     async def compile_manifest(self) -> None:
         """
         Generate meltano_manifest.json file.
@@ -152,15 +153,10 @@ class MeltanoResource(metaclass=Singleton):
             elif extractor['select']:
                 for select in extractor['select']:
                     taps_dict['taps'][i]['streams'].append(select)
-
-            # else: print('nothing')
-
         
-        print(taps_dict)
 
     async def gather_meltano_yaml_information(self):
         taps, jobs, schedules = await asyncio.gather(
-            self.fetch_stream_information(self.load_taps_from_yaml()),
             self.load_json_from_cli(["job", "list", "--format=json"]),
             self.load_json_from_cli(["schedule", "list", "--format=json"]),
         )
@@ -175,8 +171,10 @@ class MeltanoResource(metaclass=Singleton):
         Returns:
             dict: The Meltano jobs and schedules.
         """
-        taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
-        return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
+        jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
+        # taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
+        return {"jobs": jobs["jobs"], "schedules": schedules["schedules"]}
+        # return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
 
     @cached_property
     def meltano_jobs(self) -> List[Job]:
