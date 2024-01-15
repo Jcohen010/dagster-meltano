@@ -105,11 +105,13 @@ class MeltanoResource(metaclass=Singleton):
     # Not sure if this should be async, still thinking on it.
     async def compile_manifest(self) -> None:
         """
-        Generate meltano_manifest.json file.
+        Run `meltano compile` command to generate 
+        meltano_manifest.json file.
+
         """
 
-        # Create the subprocess, redirect the standard output into a pipe
-        proc = await asyncio.create_subprocess_exec(
+        # Create the subprocess.
+        await asyncio.create_subprocess_exec(
             "meltano",
             "compile",
             stdout=asyncio.subprocess.PIPE,
@@ -117,24 +119,21 @@ class MeltanoResource(metaclass=Singleton):
             cwd=self.project_dir,
         )
 
-        # Wait for the subprocess to finish
-        stdout, stderr = await proc.communicate()
-
-        # Try to load the output as JSON
-        print(f'[ exited with {proc.returncode}]')
-        if stdout:
-            print(f'[stdout]\n{stdout.decode()}')
-        if stderr:
-            print(f'[stderr]\n{stderr.decode()}')
-
         
-    def load_taps_streams_from_manifest(self) -> dict:
-        """Parse meltano-manifest.json in .meltano project dir to 
-        load tap names.
+    async def load_taps_streams_from_manifest(self) -> dict:
+        """
+        Parse meltano-manifest.json in .meltano project dir to 
+        load tap and stream names.
+
+        Returns:
+            dict with meltano taps and streams.
         
         """
         taps_dict = {'taps' : []}
         meltano_manifest_json_path = self.project_dir + "/.meltano/manifests/meltano-manifest.json"
+
+        await self.compile_manifest()
+        
         with open(meltano_manifest_json_path, 'r') as f:
             data = json.load(f)
         extractors = data['plugins']['extractors']
@@ -153,10 +152,13 @@ class MeltanoResource(metaclass=Singleton):
             elif extractor['select']:
                 for select in extractor['select']:
                     taps_dict['taps'][i]['streams'].append(select)
+
+        return taps_dict
         
 
     async def gather_meltano_yaml_information(self):
         taps, jobs, schedules = await asyncio.gather(
+            self.load_taps_streams_from_manifest(),
             self.load_json_from_cli(["job", "list", "--format=json"]),
             self.load_json_from_cli(["schedule", "list", "--format=json"]),
         )
@@ -166,15 +168,13 @@ class MeltanoResource(metaclass=Singleton):
 
     @cached_property
     def meltano_yaml(self) -> dict:
-        """Asynchronously load the Meltano jobs and schedules.
+        """Asynchronously load the Meltano taps, streams, jobs and schedules.
 
         Returns:
-            dict: The Meltano jobs and schedules.
+            dict: The Meltano taps, streams, jobs and schedules.
         """
-        jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
-        # taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
-        return {"jobs": jobs["jobs"], "schedules": schedules["schedules"]}
-        # return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
+        taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
+        return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
 
     @cached_property
     def meltano_jobs(self) -> List[Job]:
@@ -237,5 +237,6 @@ def meltano_resource(init_context):
 
 if __name__ == "__main__":
     meltano_resource = MeltanoResource("./meltano_project")
-    asyncio.run(meltano_resource.compile_manifest())
-    meltano_resource.load_taps_streams_from_manifest()
+    # asyncio.run(meltano_resource.compile_manifest())
+    # meltano_resource.load_taps_streams_from_manifest()
+    meltano_resource.meltano_yaml
