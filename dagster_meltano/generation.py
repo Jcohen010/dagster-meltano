@@ -5,7 +5,8 @@ from typing import List, Optional, Union
 
 from dagster import AssetsDefinition, JobDefinition, ScheduleDefinition
 
-from dagster_meltano.meltano_resource import MeltanoResource
+from dagster_meltano.meltano_resource import *
+from dagster_meltano.asset import *
 from dagster_meltano.utils import generate_dbt_group_name
 
 
@@ -47,8 +48,7 @@ def load_assets_from_meltano_project(
         List[AssetsDefinition]: Returns a list of all Meltano assets
     """
     meltano_resource = MeltanoResource(meltano_project_dir)
-    meltano_assets = []
-    meltano_assets = [extractor.asset for extractor in meltano_resource.extractors]
+    meltano_assets = meltano_resource.assets
 
     # if dbt_project_dir:
     #     dbt_assets = load_assets_from_dbt_project(
@@ -64,4 +64,5 @@ def load_assets_from_meltano_project(
 
 
 if __name__ == "__main__":
-    load_jobs_from_meltano_project("/workspace/meltano")
+    # load_jobs_from_meltano_project("/workspace/meltano")
+    print(load_assets_from_meltano_project("/meltano_project"))
