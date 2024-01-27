@@ -7,15 +7,18 @@ from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from dagster import DagsterLogManager, resource, Field
+from dagster import DagsterLogManager, resource, Field, get_dagster_logger
 from dagster_meltano.exceptions import MeltanoCommandError
 
+from dagster_meltano.asset import Asset
 from dagster_meltano.job import Job
 from dagster_meltano.schedule import Schedule
 from dagster_meltano.utils import Singleton
 from dagster_shell import execute_shell_command
 
 STDOUT = 1
+
+dagster_logger = get_dagster_logger()
 
 
 class MeltanoResource(metaclass=Singleton):
@@ -24,10 +27,12 @@ class MeltanoResource(metaclass=Singleton):
         project_dir: str = None,
         meltano_bin: Optional[str] = "meltano",
         retries: int = 0,
+        target: str = None
     ):
         self.project_dir = str(project_dir)
         self.meltano_bin = meltano_bin
         self.retries = retries
+        self.target = str(target)
 
     @property
     def default_env(self) -> Dict[str, str]:
@@ -69,7 +74,7 @@ class MeltanoResource(metaclass=Singleton):
 
         if exit_code != 0:
             raise MeltanoCommandError(
-                f"Command '{command}' failed with exit code {exit_code}"
+                f"Command '{command}' failed with exit code {exit_code}: \n {output}"
             )
 
         return output
@@ -101,6 +106,36 @@ class MeltanoResource(metaclass=Singleton):
             return json.loads(stdout)
         except json.decoder.JSONDecodeError:
             raise ValueError(f"Could not process json: {stdout} {stderr}")
+        
+    async def load_discoverable_streams_from_cli(self, command: List[str]) -> dict:
+        """Use the Meltano CLI to load JSON data.
+        Use asyncio to run multiple commands concurrently.
+
+        Args:
+            command (List[str]): The Meltano command to execute.
+
+        Returns:
+            dict: The processed JSON data.
+        """
+        # Create the subprocess, redirect the standard output into a pipe
+        proc = await asyncio.create_subprocess_exec(
+            "meltano",
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.project_dir,
+        )
+
+        # Wait for the subprocess to finish
+        stdout, stderr = await proc.communicate()
+
+        # Try to load the output as JSON
+
+        components = str(stdout).split("\n")
+
+        for component in components:
+            # if '[select ]' in component:
+            print(component)
 
     # Not sure if this should be async, still thinking on it.
     async def compile_manifest(self) -> None:
@@ -133,11 +168,13 @@ class MeltanoResource(metaclass=Singleton):
         meltano_manifest_json_path = self.project_dir + "/.meltano/manifests/meltano-manifest.json"
 
         await self.compile_manifest()
-        
+
         with open(meltano_manifest_json_path, 'r') as f:
             data = json.load(f)
         extractors = data['plugins']['extractors']
+
         for i, extractor in enumerate(extractors):
+            dagster_logger.info(f'{extractor=}')
             taps_dict['taps'].append(
                 {
                     'tap_name': extractor['name'], 
@@ -156,7 +193,7 @@ class MeltanoResource(metaclass=Singleton):
         return taps_dict
         
 
-    async def gather_meltano_yaml_information(self):
+    async def gather_meltano_dict_information(self):
         taps, jobs, schedules = await asyncio.gather(
             self.load_taps_streams_from_manifest(),
             self.load_json_from_cli(["job", "list", "--format=json"]),
@@ -167,18 +204,18 @@ class MeltanoResource(metaclass=Singleton):
     
 
     @cached_property
-    def meltano_yaml(self) -> dict:
+    def meltano_dict(self) -> dict:
         """Asynchronously load the Meltano taps, streams, jobs and schedules.
 
         Returns:
             dict: The Meltano taps, streams, jobs and schedules.
         """
-        taps, jobs, schedules = asyncio.run(self.gather_meltano_yaml_information())
+        taps, jobs, schedules = asyncio.get_event_loop().run_until_complete(self.gather_meltano_dict_information())
         return {'taps' : taps['taps'], "jobs": jobs["jobs"], "schedules": schedules["schedules"]}
 
     @cached_property
     def meltano_jobs(self) -> List[Job]:
-        meltano_job_list = self.meltano_yaml["jobs"]
+        meltano_job_list = self.meltano_dict["jobs"]
         return [
             Job(
                 meltano_job=meltano_job,
@@ -189,11 +226,18 @@ class MeltanoResource(metaclass=Singleton):
 
     @cached_property
     def meltano_schedules(self) -> List[Schedule]:
-        meltano_schedule_list = self.meltano_yaml["schedules"]["job"]
+        meltano_schedule_list = self.meltano_dict["schedules"]["job"]
         schedule_list = [
             Schedule(meltano_schedule) for meltano_schedule in meltano_schedule_list
         ]
         return schedule_list
+    
+    @cached_property
+    def meltano_tap_streams(self) -> List[Asset]:
+        tapstreams_list = [
+            Asset(meltano_tapstream) for meltano_tapstream in self.meltano_dict["taps"]
+        ]
+        return tapstreams_list
 
     @property
     def meltano_job_schedules(self) -> Dict[str, Schedule]:
@@ -207,6 +251,14 @@ class MeltanoResource(metaclass=Singleton):
         for meltano_schedule in self.meltano_schedules:
             yield meltano_schedule.dagster_schedule
 
+    @property
+    def assets(self) -> List[dict]:
+        asset_list = []
+        for tap in self.meltano_tap_streams:
+            for stream in tap.dagster_asset:
+                asset_list.append(stream)
+
+        return asset_list
 
 @resource(
     description="A resource that corresponds to a Meltano project.",
@@ -238,5 +290,5 @@ def meltano_resource(init_context):
 if __name__ == "__main__":
     meltano_resource = MeltanoResource("./meltano_project")
     # asyncio.run(meltano_resource.compile_manifest())
-    # meltano_resource.load_taps_streams_from_manifest()
-    meltano_resource.meltano_yaml
+    print(meltano_resource.meltano_tap_streams)
+    # asyncio.run(meltano_resource.load_discoverable_streams_from_cli(["select", "tap-mysql", "--list", "all"]))
