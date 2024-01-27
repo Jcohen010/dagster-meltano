@@ -10,25 +10,36 @@ plugins:
     config:
       streams:
       - stream_name: animals
-      - stream_name: test
         input_filename: https://gitlab.com/meltano/tap-smoke-test/-/raw/main/demo-data/animals-data.jsonl
-  - name: tap-mysql
-    variant: transferwise
-    pip_url: pipelinewise-tap-mysql
+  - name: tap-gitlab
+    variant: meltanolabs
+    pip_url: git+https://github.com/MeltanoLabs/tap-gitlab.git
     config:
-      database: Rfam
-      host: mysql-rfam-public.ebi.ac.uk
-      port: 4497
-      user: rfamro
-      password: ''
+      projects: meltano/meltano
+      start_date: 2021-04-01T00:00:00:Z
     select:
-    - Rfam_old-wikitext.*
+    - tags
+    - releases
+  - name: tap-rickandmorty
+    variant: clrcrl
+    pip_url: git+https://github.com/clrcrl/tap-rickandmorty.git
   loaders:
   - name: target-jsonl
     variant: andyh1203
     pip_url: target-jsonl
     env:
       MELTANO_LOAD_SCHEMA: TAP_CARBON_INTENSITY
+  - name: target-csv
+    variant: hotgluexyz
+    pip_url: git+https://github.com/hotgluexyz/target-csv.git
+    config:
+      destination_path: .
+  - name: target-duckdb
+    variant: jwills
+    pip_url: target-duckdb~=0.6
+    config:
+      path: testdw.duckdb
+      default_target_schema: raw
   utilities:
   - name: dagster
     variant: quantile-development
